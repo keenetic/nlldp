@@ -56,6 +56,8 @@ THE SOFTWARE.
 #define READ_RETRY_MS				100 // ms
 #define READ_RETRY_TIMES			5 //
 
+#define IFACES_COUNT				32
+
 #if !defined(ETH_P_LLDP)
 #define ETH_P_LLDP					0x88cc
 #endif /* ETH_P_LLDP */
@@ -93,6 +95,8 @@ static const uint8_t org_uniq_code[] = { 'N', 'D', 'M' };
 /* external configuration */
 static bool debug = false;
 static const char *user = "nobody";
+static unsigned int allowed_ifidx[IFACES_COUNT];
+static size_t allowed_count = 0;
 
 /* internal state */
 static int fd_recv = -1;
@@ -199,6 +203,7 @@ static bool nlldo_nonblock_read(
 
 static void nlldo_handle_packet()
 {
+	size_t i;
 	uint8_t packet[2048];
 	uint8_t *p = packet;
 	uint16_t ethertype;
@@ -228,6 +233,20 @@ static void nlldo_handle_packet()
 
 		if (debug) {
 			NDM_LOG_ERROR("unable to receive LLDP packet: %zu", bytes_read);
+		}
+
+		return;
+	}
+
+	for (i = 0; i < allowed_count; ++i) {
+		if (sa.sll_ifindex == allowed_ifidx[i]) {
+			break;
+		}
+	}
+
+	if (i >= allowed_count) {
+		if (debug) {
+			NDM_LOG_INFO("skip LLDP from interface %d", sa.sll_ifindex);
 		}
 
 		return;
@@ -514,6 +533,44 @@ cleanup:
 		close(fd_recv);
 }
 
+static bool split_interfaces(const char *arg)
+{
+	char *s, *str, *p;
+
+	p = str = strdup(arg);
+
+	if (str == NULL) {
+		NDM_LOG_ERROR("OOM");
+
+		return false;
+	}
+
+	while ((s = strsep(&str, ","))) {
+		unsigned int v = 0;
+
+		if (!ndm_int_parse_uint(s, &v)) {
+			NDM_LOG_ERROR("invalid value: \"%s\"", s);
+			free(p);
+
+			return false;
+		}
+
+		if (allowed_count >= IFACES_COUNT) {
+			NDM_LOG_ERROR("too many allowed interfaces");
+			free(p);
+
+			return false;
+		}
+
+		allowed_ifidx[allowed_count] = v;
+		allowed_count++;
+	}
+
+	free(p);
+
+	return true;
+}
+
 int main(int argc, char *argv[])
 {
 	int ret_code = EXIT_FAILURE;
@@ -521,7 +578,7 @@ int main(int argc, char *argv[])
 	int c;
 
 	for (;;) {
-		c = getopt(argc, argv, "u:d");
+		c = getopt(argc, argv, "a:u:d");
 
 		if (c < 0)
 			break;
@@ -536,6 +593,12 @@ int main(int argc, char *argv[])
 			user = optarg;
 			break;
 
+		case 'a':
+			if (!split_interfaces(optarg)) {
+				return ret_code;
+			}
+
+			break;
 
 		default:
 			NDM_LOG_ERROR("unknown option \"%c\"", (char) optopt);
