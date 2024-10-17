@@ -218,200 +218,214 @@ static bool nllda_nonblock_write(
 	return true;
 }
 
+static size_t nllda_make_packet(uint8_t* p, const uint8_t* dst_mac,
+								const bool is_private)
+{
+	uint16_t *proto;
+	uint16_t caps;
+	size_t tlv_len;
+	struct lldp_tlv tlv;
+	const uint8_t* ps = p;
+
+	memcpy(p, dst_mac, ETHER_ADDR_LEN);
+	p += ETHER_ADDR_LEN;
+	memcpy(p, &mac.sa.sa_data, ETHER_ADDR_LEN);
+	p += ETHER_ADDR_LEN;
+	proto = (uint16_t*)p;
+	*proto = htons(ETH_P_LLDP);
+	p += sizeof(uint16_t);
+
+	/* Chassis ID */
+	tlv_len = 7;
+	memset(&tlv, 0, sizeof(tlv));
+	tlv.hdr = TLV_HDR(1, tlv_len); /* Chassis ID */
+	tlv.u.sub.subtype = 4; /* mac address */
+	memcpy(&tlv.u.sub.data, &mac.sa.sa_data, ETHER_ADDR_LEN);
+	TLV_ADD(p, tlv, tlv_len);
+
+	/* Port ID */
+	tlv_len = 1 + strlen(interface_id);
+	memset(&tlv, 0, sizeof(tlv));
+	tlv.hdr = TLV_HDR(2, tlv_len); /* port id */
+	tlv.u.sub.subtype = 5; /* interface name */
+	memcpy(&tlv.u.sub.data, interface_id, strlen(interface_id));
+	TLV_ADD(p, tlv, tlv_len);
+
+	/* TTL */
+	tlv_len = 2;
+	memset(&tlv, 0, sizeof(tlv));
+	tlv.hdr = TLV_HDR(3, tlv_len); /* TTL */
+	*((uint16_t*)tlv.u.data) = htons(SEND_TTL);
+	TLV_ADD(p, tlv, tlv_len);
+
+	/* port description */
+	tlv_len = strlen(port_description);
+	memset(&tlv, 0, sizeof(tlv));
+	tlv.hdr = TLV_HDR(4, tlv_len); /* port description */
+	memcpy(&tlv.u.data, port_description, strlen(port_description));
+	TLV_ADD(p, tlv, tlv_len);
+
+	/* System name */
+	tlv_len = strlen(system_name);
+	memset(&tlv, 0, sizeof(tlv));
+	tlv.hdr = TLV_HDR(5, tlv_len); /* system name */
+	memcpy(&tlv.u.data, system_name, strlen(system_name));
+	TLV_ADD(p, tlv, tlv_len);
+
+	/* System description */
+	tlv_len = strlen(description);
+	memset(&tlv, 0, sizeof(tlv));
+	tlv.hdr = TLV_HDR(6, tlv_len); /* system description */
+	memcpy(&tlv.u.data, description, strlen(description));
+	TLV_ADD(p, tlv, tlv_len);
+
+	if (!ndm_ip_sockaddr_is_equal(&ipv4_address, &NDM_IP_SOCKADDR_ANY) &&
+		is_private) {
+		/* management access */
+		tlv_len = 12;
+		memset(&tlv, 0, sizeof(tlv));
+		tlv.hdr = TLV_HDR(8, tlv_len); /* management access */
+		*((uint8_t *)(tlv.u.data)) = 5; /* address string length */
+		*((uint8_t *)(tlv.u.data + 1)) = 1; /* address subtype: IPv4 */
+		*((uint32_t *)(tlv.u.data + 2)) = ipv4_address.un.in.sin_addr.s_addr;
+		*((uint8_t *)(tlv.u.data + 6)) = 2; /* interface subtype ifindex */
+		*((uint32_t *)(tlv.u.data + 7)) = htonl((uint32_t)interface_idx);
+		TLV_ADD(p, tlv, tlv_len);
+	}
+
+	caps = 0;
+
+	if (is_bridge)
+		caps += (1 << 2); /* Bridge */
+
+	if (is_wlan_ap)
+		caps += (1 << 3); /* WLAN access point */
+
+	if (!strcmp(mode, "router"))
+		caps += (1 << 4); /* Router */
+
+	/* Capabilities */
+	tlv_len = 4;
+	memset(&tlv, 0, sizeof(tlv));
+	tlv.hdr = TLV_HDR(7, tlv_len); /* capabilities */
+	*((uint16_t*)tlv.u.data) = htons(caps);
+	*((uint16_t*)(tlv.u.data + 2)) = htons(caps);
+	TLV_ADD(p, tlv, tlv_len);
+
+	/* NDM Specific System Mode */
+	tlv_len = 4 + strlen(mode);
+	memset(&tlv, 0, sizeof(tlv));
+	tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific System Mode */
+	memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
+	tlv.u.org.subtype = 1; /* NDM Subtype System Mode */
+	memcpy(tlv.u.org.data, mode, strlen(mode)); /* NDM Subtype System Mode value */
+	TLV_ADD(p, tlv, tlv_len);
+
+	if (is_private && port != 0) {
+		/* NDM Specific HTTP port */
+		tlv_len = 6;
+		memset(&tlv, 0, sizeof(tlv));
+		tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific HTTP port */
+		memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
+		tlv.u.org.subtype = 2; /* NDM Subtype HTTP port */
+		*((uint16_t*)tlv.u.org.data) = htons(port); /* NDM Subtype HTTP port value */
+		TLV_ADD(p, tlv, tlv_len);
+	}
+
+	if (is_private) {
+		/* NDM Specific Software version */
+		tlv_len = 4 + strlen(version);
+		memset(&tlv, 0, sizeof(tlv));
+		tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific Software version */
+		memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
+		tlv.u.org.subtype = 3; /* NDM Subtype Software version */
+		memcpy(tlv.u.org.data, version, strlen(version)); /* NDM Subtype Software version value */
+		TLV_ADD(p, tlv, tlv_len);
+	}
+
+	if (is_private && strlen(cid) > 1) {
+		/* NDM Specific Device CID */
+		tlv_len = 4 + strlen(cid);
+		memset(&tlv, 0, sizeof(tlv));
+		tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific Device CID */
+		memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
+		tlv.u.org.subtype = 4; /* NDM Subtype Device CID */
+		memcpy(tlv.u.org.data, cid, strlen(cid)); /* NDM Subtype Device CID value */
+		TLV_ADD(p, tlv, tlv_len);
+	}
+
+	if (is_private && strlen(controller_cid) > 1) {
+		/* NDM Specific Contoller CID */
+		tlv_len = 4 + strlen(controller_cid);
+		memset(&tlv, 0, sizeof(tlv));
+		tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific Contoller CID */
+		memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
+		tlv.u.org.subtype = 5; /* NDM Subtype Device CID */
+		memcpy(tlv.u.org.data, controller_cid, strlen(controller_cid)); /* NDM Subtype Controller CID value */
+		TLV_ADD(p, tlv, tlv_len);
+	}
+
+	if (is_private && strlen(ta_domain) > 1) {
+		/* NDM Specific TA Domain */
+		tlv_len = 4 + strlen(ta_domain);
+		memset(&tlv, 0, sizeof(tlv));
+		tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific TA domain */
+		memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
+		tlv.u.org.subtype = 6; /* NDM Subtype TA domain */
+		memcpy(tlv.u.org.data, ta_domain, strlen(ta_domain)); /* NDM Subtype TA Domain value */
+		TLV_ADD(p, tlv, tlv_len);
+	}
+
+	/* End of LLDPDU */
+	memset(&tlv, 0, sizeof(tlv));
+	memcpy(p, &tlv, 2);
+	p += 2; // End of LLDPDU
+
+	return (size_t)(p - ps);
+}
+
+static void nllda_send_packet(const uint8_t* p, const size_t len)
+{
+	struct sockaddr_ll sa;
+	size_t bytes_written = 0;
+
+	sa.sll_family = AF_PACKET;
+	sa.sll_ifindex = interface_idx;
+	sa.sll_halen = ETHER_ADDR_LEN;
+	sa.sll_protocol = htons(ETH_P_LLDP);
+
+	memcpy(&sa.sll_addr, &mac.sa.sa_data, ETHER_ADDR_LEN);
+
+	if ((!nllda_nonblock_write(fd_send, p, len, &bytes_written, &sa) ||
+		len != bytes_written) && debug) {
+		NDM_LOG_ERROR("unable to send LLDPDU");
+	}
+}
+
+static void nllda_do_packet(const uint8_t* dst_mac, const bool is_private)
+{
+	uint8_t packet[1200];
+	size_t len = 0;
+
+	memset(packet, 0, sizeof(packet));
+
+	len = nllda_make_packet(packet, dst_mac, is_private);
+	nllda_send_packet(packet, len);
+}
+
 static void nllda_loop()
 {
 	const bool is_private = (strcmp(seclvl, "private") == 0);
 	const bool is_protected = (strcmp(seclvl, "protected") == 0);
 	const bool is_loop_detect = loop_detect && (is_private || is_protected);
+	const bool is_broadcast = (is_private || is_loop_detect);
 
 	while (!ndm_sys_is_interrupted()) {
-		uint8_t packet[1200];
-		uint8_t *p = packet;
-		const uint8_t *dst_mac;
-		uint16_t *proto;
-		uint16_t caps;
-		size_t tlv_len;
-		struct lldp_tlv tlv;
-
-		if (is_private || is_loop_detect)
-			dst_mac = dst_broadcast_mac;
-		else
-			dst_mac = dst_multicast_mac;
-
-		memset(p, 0, sizeof(packet));
-
-		memcpy(p, dst_mac, ETHER_ADDR_LEN);
-		p += ETHER_ADDR_LEN;
-		memcpy(p, &mac.sa.sa_data, ETHER_ADDR_LEN);
-		p += ETHER_ADDR_LEN;
-		proto = (uint16_t*)p;
-		*proto = htons(ETH_P_LLDP);
-		p += sizeof(uint16_t);
-
-		/* Chassis ID */
-		tlv_len = 7;
-		memset(&tlv, 0, sizeof(tlv));
-		tlv.hdr = TLV_HDR(1, tlv_len); /* Chassis ID */
-		tlv.u.sub.subtype = 4; /* mac address */
-		memcpy(&tlv.u.sub.data, &mac.sa.sa_data, ETHER_ADDR_LEN);
-		TLV_ADD(p, tlv, tlv_len);
-
-		/* Port ID */
-		tlv_len = 1 + strlen(interface_id);
-		memset(&tlv, 0, sizeof(tlv));
-		tlv.hdr = TLV_HDR(2, tlv_len); /* port id */
-		tlv.u.sub.subtype = 5; /* interface name */
-		memcpy(&tlv.u.sub.data, interface_id, strlen(interface_id));
-		TLV_ADD(p, tlv, tlv_len);
-
-		/* TTL */
-		tlv_len = 2;
-		memset(&tlv, 0, sizeof(tlv));
-		tlv.hdr = TLV_HDR(3, tlv_len); /* TTL */
-		*((uint16_t*)tlv.u.data) = htons(SEND_TTL);
-		TLV_ADD(p, tlv, tlv_len);
-
-		/* port description */
-		tlv_len = strlen(port_description);
-		memset(&tlv, 0, sizeof(tlv));
-		tlv.hdr = TLV_HDR(4, tlv_len); /* port description */
-		memcpy(&tlv.u.data, port_description, strlen(port_description));
-		TLV_ADD(p, tlv, tlv_len);
-
-		/* System name */
-		tlv_len = strlen(system_name);
-		memset(&tlv, 0, sizeof(tlv));
-		tlv.hdr = TLV_HDR(5, tlv_len); /* system name */
-		memcpy(&tlv.u.data, system_name, strlen(system_name));
-		TLV_ADD(p, tlv, tlv_len);
-
-		/* System description */
-		tlv_len = strlen(description);
-		memset(&tlv, 0, sizeof(tlv));
-		tlv.hdr = TLV_HDR(6, tlv_len); /* system description */
-		memcpy(&tlv.u.data, description, strlen(description));
-		TLV_ADD(p, tlv, tlv_len);
-
-		if (!ndm_ip_sockaddr_is_equal(&ipv4_address, &NDM_IP_SOCKADDR_ANY) &&
-			is_private) {
-			/* management access */
-			tlv_len = 12;
-			memset(&tlv, 0, sizeof(tlv));
-			tlv.hdr = TLV_HDR(8, tlv_len); /* management access */
-			*((uint8_t *)(tlv.u.data)) = 5; /* address string length */
-			*((uint8_t *)(tlv.u.data + 1)) = 1; /* address subtype: IPv4 */
-			*((uint32_t *)(tlv.u.data + 2)) = ipv4_address.un.in.sin_addr.s_addr;
-			*((uint8_t *)(tlv.u.data + 6)) = 2; /* interface subtype ifindex */
-			*((uint32_t *)(tlv.u.data + 7)) = htonl((uint32_t)interface_idx);
-			TLV_ADD(p, tlv, tlv_len);
+		if (is_broadcast) {
+			nllda_do_packet(dst_broadcast_mac, is_private);
 		}
 
-		caps = 0;
-
-		if (is_bridge)
-			caps += (1 << 2); /* Bridge */
-
-		if (is_wlan_ap)
-			caps += (1 << 3); /* WLAN access point */
-
-		if (!strcmp(mode, "router"))
-			caps += (1 << 4); /* Router */
-
-		/* Capabilities */
-		tlv_len = 4;
-		memset(&tlv, 0, sizeof(tlv));
-		tlv.hdr = TLV_HDR(7, tlv_len); /* capabilities */
-		*((uint16_t*)tlv.u.data) = htons(caps);
-		*((uint16_t*)(tlv.u.data + 2)) = htons(caps);
-		TLV_ADD(p, tlv, tlv_len);
-
-		/* NDM Specific System Mode */
-		tlv_len = 4 + strlen(mode);
-		memset(&tlv, 0, sizeof(tlv));
-		tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific System Mode */
-		memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
-		tlv.u.org.subtype = 1; /* NDM Subtype System Mode */
-		memcpy(tlv.u.org.data, mode, strlen(mode)); /* NDM Subtype System Mode value */
-		TLV_ADD(p, tlv, tlv_len);
-
-		if (is_private && port != 0) {
-			/* NDM Specific HTTP port */
-			tlv_len = 6;
-			memset(&tlv, 0, sizeof(tlv));
-			tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific HTTP port */
-			memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
-			tlv.u.org.subtype = 2; /* NDM Subtype HTTP port */
-			*((uint16_t*)tlv.u.org.data) = htons(port); /* NDM Subtype HTTP port value */
-			TLV_ADD(p, tlv, tlv_len);
-		}
-
-		if (is_private) {
-			/* NDM Specific Software version */
-			tlv_len = 4 + strlen(version);
-			memset(&tlv, 0, sizeof(tlv));
-			tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific Software version */
-			memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
-			tlv.u.org.subtype = 3; /* NDM Subtype Software version */
-			memcpy(tlv.u.org.data, version, strlen(version)); /* NDM Subtype Software version value */
-			TLV_ADD(p, tlv, tlv_len);
-		}
-
-		if (is_private && strlen(cid) > 1) {
-			/* NDM Specific Device CID */
-			tlv_len = 4 + strlen(cid);
-			memset(&tlv, 0, sizeof(tlv));
-			tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific Device CID */
-			memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
-			tlv.u.org.subtype = 4; /* NDM Subtype Device CID */
-			memcpy(tlv.u.org.data, cid, strlen(cid)); /* NDM Subtype Device CID value */
-			TLV_ADD(p, tlv, tlv_len);
-		}
-
-		if (is_private && strlen(controller_cid) > 1) {
-			/* NDM Specific Contoller CID */
-			tlv_len = 4 + strlen(controller_cid);
-			memset(&tlv, 0, sizeof(tlv));
-			tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific Contoller CID */
-			memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
-			tlv.u.org.subtype = 5; /* NDM Subtype Device CID */
-			memcpy(tlv.u.org.data, controller_cid, strlen(controller_cid)); /* NDM Subtype Controller CID value */
-			TLV_ADD(p, tlv, tlv_len);
-		}
-
-		if (is_private && strlen(ta_domain) > 1) {
-			/* NDM Specific TA Domain */
-			tlv_len = 4 + strlen(ta_domain);
-			memset(&tlv, 0, sizeof(tlv));
-			tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific TA domain */
-			memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
-			tlv.u.org.subtype = 6; /* NDM Subtype TA domain */
-			memcpy(tlv.u.org.data, ta_domain, strlen(ta_domain)); /* NDM Subtype TA Domain value */
-			TLV_ADD(p, tlv, tlv_len);
-		}
-
-		/* End of LLDPDU */
-		memset(&tlv, 0, sizeof(tlv));
-		memcpy(p, &tlv, 2);
-		p += 2; // End of LLDPDU
-
-		{
-			struct sockaddr_ll sa;
-			size_t bytes_written = 0;
-			size_t len = (size_t)(p - packet);
-
-			sa.sll_family = AF_PACKET;
-			sa.sll_ifindex = interface_idx;
-			sa.sll_halen = ETHER_ADDR_LEN;
-			sa.sll_protocol = htons(ETH_P_LLDP);
-
-			memcpy(&sa.sll_addr, &mac.sa.sa_data, ETHER_ADDR_LEN);
-
-			if ((!nllda_nonblock_write(
-					fd_send, packet, len, &bytes_written, &sa) ||
-				len != bytes_written) && debug) {
-				NDM_LOG_ERROR("unable to send LLDPDU");
-			}
-		}
+		nllda_do_packet(dst_multicast_mac, is_private);
 
 		ndm_sys_sleep_msec(
 			is_loop_detect ?
