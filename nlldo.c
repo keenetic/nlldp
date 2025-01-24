@@ -219,6 +219,7 @@ static void nlldo_handle_packet()
 	uint8_t p_cid[128];
 	uint8_t p_contoller_cid[128];
 	uint8_t p_ta_domain[96];
+	uint32_t p_fw_id = 0;
 
 	ndm_mac_addr_init(&p_mac);
 	memset(p_description, 0, sizeof(p_description));
@@ -354,6 +355,11 @@ static void nlldo_handle_packet()
 									tlv->u.org.data, datalen);
 							}
 							break;
+						case 7: /* FW ID */
+							if (datalen == sizeof(p_fw_id)) {
+								p_fw_id = ntohl(*((uint32_t*)tlv->u.org.data));
+							}
+							break;
 						default:
 							break;
 					};
@@ -385,6 +391,7 @@ static void nlldo_handle_packet()
 				"%s=%s" NESEP_
 				"%s=%s" NESEP_
 				"%s=%u" NESEP_
+				"%s=%u" NESEP_
 				"%s=%d" NESEP_
 				"%s=%s" NESEP_
 				"%s=%s" NESEP_
@@ -395,6 +402,7 @@ static void nlldo_handle_packet()
 				"desc", p_description,
 				"mode", p_mode,
 				"http_port", p_port,
+				"fw_id", p_fw_id,
 				"interface_idx", sa.sll_ifindex,
 				"fw_version", p_fw,
 				"cid", p_cid,

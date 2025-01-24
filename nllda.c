@@ -107,6 +107,9 @@ static const char *cid = "";
 static const char *controller_cid = "";
 static const char *ta_domain = "";
 static bool loop_detect = false;
+static uint32_t fw_id = 0;
+
+_Static_assert(sizeof(fw_id) == sizeof(unsigned int), "fw_id has wrong size");
 
 /* internal state */
 static int fd_send = -1;
@@ -323,7 +326,7 @@ static size_t nllda_make_packet(uint8_t* p, const uint8_t* dst_mac,
 
 	if (is_private && port != 0) {
 		/* NDM Specific HTTP port */
-		tlv_len = 6;
+		tlv_len = 4 + sizeof(uint16_t);
 		memset(&tlv, 0, sizeof(tlv));
 		tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific HTTP port */
 		memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
@@ -373,6 +376,17 @@ static size_t nllda_make_packet(uint8_t* p, const uint8_t* dst_mac,
 		memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
 		tlv.u.org.subtype = 6; /* NDM Subtype TA domain */
 		memcpy(tlv.u.org.data, ta_domain, strlen(ta_domain)); /* NDM Subtype TA Domain value */
+		TLV_ADD(p, tlv, tlv_len);
+	}
+
+	if (is_private && fw_id > 0) {
+		/* NDM Specific FW ID */
+		tlv_len = 4 + sizeof(uint32_t);
+		memset(&tlv, 0, sizeof(tlv));
+		tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific FW ID */
+		memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
+		tlv.u.org.subtype = 7; /* NDM Subtype FW ID */
+		*((uint32_t*)tlv.u.org.data) = htonl(fw_id); /* NDM Subtype FW ID value */
 		TLV_ADD(p, tlv, tlv_len);
 	}
 
@@ -496,7 +510,7 @@ int main(int argc, char *argv[])
 	ipv4_address = NDM_IP_SOCKADDR_ANY;
 
 	for (;;) {
-		c = getopt(argc, argv, "u:S:m:M:I:p:x:n:D:A:P:bwV:dc:C:T:l");
+		c = getopt(argc, argv, "u:S:m:M:I:i:p:x:n:D:A:P:bwV:dc:C:T:l");
 
 		if (c < 0)
 			break;
@@ -529,6 +543,14 @@ int main(int argc, char *argv[])
 
 		case 'I':
 			interface_id = optarg;
+			break;
+
+		case 'i':
+			if (!ndm_int_parse_uint(optarg, &(fw_id))) {
+				NDM_LOG_ERROR("invalid fw_id value: \"%s\"",
+							  optarg);
+				return ret_code;
+			}
 			break;
 
 		case 'p':
