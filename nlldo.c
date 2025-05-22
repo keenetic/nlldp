@@ -219,6 +219,7 @@ static void nlldo_handle_packet()
 	uint8_t p_cid[128];
 	uint8_t p_contoller_cid[128];
 	uint8_t p_ta_domain[96];
+	uint8_t p_region[32];
 	uint32_t p_fw_id = 0;
 
 	ndm_mac_addr_init(&p_mac);
@@ -228,6 +229,7 @@ static void nlldo_handle_packet()
 	memset(p_cid, 0, sizeof(p_cid));
 	memset(p_contoller_cid, 0, sizeof(p_contoller_cid));
 	memset(p_ta_domain, 0, sizeof(p_ta_domain));
+	memset(p_region, 0, sizeof(p_region));
 
 	if (!nlldo_nonblock_read(fd_recv, packet, sizeof(packet), &bytes_read, &sa) ||
 		bytes_read == 0) {
@@ -360,6 +362,11 @@ static void nlldo_handle_packet()
 								p_fw_id = ntohl(*((uint32_t*)tlv->u.org.data));
 							}
 							break;
+						case 8: /* Region */
+							if (datalen < sizeof(p_region)) {
+								memcpy(p_region, tlv->u.org.data, datalen);
+							}
+							break;
 						default:
 							break;
 					};
@@ -396,6 +403,7 @@ static void nlldo_handle_packet()
 				"%s=%s" NESEP_
 				"%s=%s" NESEP_
 				"%s=%s" NESEP_
+				"%s=%s" NESEP_
 				"%s=%s",
 				"mac", ndm_mac_addr_as_string(&p_mac),
 				"ip", p_management_ip,
@@ -407,7 +415,8 @@ static void nlldo_handle_packet()
 				"fw_version", p_fw,
 				"cid", p_cid,
 				"controller_cid", p_contoller_cid,
-				"ta_domain", p_ta_domain) && debug ) {
+				"ta_domain", p_ta_domain,
+				"region", p_region) && debug ) {
 			const int err = errno;
 
 			NDM_LOG_ERROR(

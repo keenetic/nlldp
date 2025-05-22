@@ -97,6 +97,7 @@ static const char *interface_id = "";
 static int interface_idx = 0;
 static const char *system_name = "";
 static const char *port_description = "";
+static const char *region = "";
 static const char *description = "";
 static struct ndm_ip_sockaddr_t ipv4_address;
 static unsigned short port = 0;
@@ -390,6 +391,17 @@ static size_t nllda_make_packet(uint8_t* p, const uint8_t* dst_mac,
 		TLV_ADD(p, tlv, tlv_len);
 	}
 
+	if (is_private && strlen(region) > 1) {
+		/* NDM Specific Region */
+		tlv_len = 4 + strlen(region);
+		memset(&tlv, 0, sizeof(tlv));
+		tlv.hdr = TLV_HDR(127, tlv_len); /* NDM Specific Region */
+		memcpy(tlv.u.org.org, org_uniq_code, sizeof(org_uniq_code));
+		tlv.u.org.subtype = 8; /* NDM Subtype Region */
+		memcpy(tlv.u.org.data, region, strlen(region)); /* NDM Subtype Region value */
+		TLV_ADD(p, tlv, tlv_len);
+	}
+
 	/* End of LLDPDU */
 	memset(&tlv, 0, sizeof(tlv));
 	memcpy(p, &tlv, 2);
@@ -510,7 +522,7 @@ int main(int argc, char *argv[])
 	ipv4_address = NDM_IP_SOCKADDR_ANY;
 
 	for (;;) {
-		c = getopt(argc, argv, "u:S:m:M:I:i:p:x:n:D:A:P:bwV:dc:C:T:l");
+		c = getopt(argc, argv, "u:S:m:M:I:i:p:x:n:D:A:P:bwV:dc:C:R:T:l");
 
 		if (c < 0)
 			break;
@@ -611,6 +623,10 @@ int main(int argc, char *argv[])
 
 		case 'C':
 			controller_cid = optarg;
+			break;
+
+		case 'R':
+			region = optarg;
 			break;
 
 		case 'T':
